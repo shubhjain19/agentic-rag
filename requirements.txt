@@ -1,0 +1,5 @@
+meilisearch
+requests
+pandas
+python-dotenv
+
