@@ -93,6 +93,7 @@ class AgenticRAGSystem:
             
             # Check if Meilisearch is running
             if not self.meilisearch_client.health_check():
+                logger.error("Meilisearch health check failed")
                 print("Error: Meilisearch is not running. Please start it first.")
                 return False
 
@@ -100,20 +101,22 @@ class AgenticRAGSystem:
             self.meilisearch_client.configure_search_settings()
             
             stats = self.meilisearch_client.get_index_stats()
+            
             if stats.get('numberOfDocuments', 0) > 0:
-                #print(f"System ready with {stats['numberOfDocuments']} documents")
+                logger.info("Index already contains documents, skipping data loading")
                 return True
             
             print("Loading data...")
             documents = self.data_loader.process_data()
             
-            #print(f"Indexing {len(documents)} documents...")
+            logger.info(f"Adding {len(documents)} documents to index")
             self.meilisearch_client.add_documents(documents)
             
             print("System ready!")
             return True
             
         except Exception as e:
+            logger.error(f"System initialization failed: {e}")
             print(f"Error: {e}")
             raise
     
@@ -125,6 +128,7 @@ class AgenticRAGSystem:
         """Process a user query using RAG"""
         try:
             start_time = time.time()
+            logger.info(f"Processing query: '{user_query}'")
             
             # Search for relevant documents with improved search
             search_results = self._smart_search(user_query, max_results or Config.MAX_SEARCH_RESULTS, filters)
@@ -132,6 +136,7 @@ class AgenticRAGSystem:
             search_time = time.time() - start_time
             
             if not search_results['hits']:
+                logger.warning("No relevant documents found for query")
                 return {
                     "query": user_query,
                     "answer": "I couldn't find any relevant data to answer your question. Please try rephrasing your query.",
@@ -190,6 +195,8 @@ class AgenticRAGSystem:
                     "processing_time_ms": search_results.get('processingTimeMs', 0)
                 }
             }
+            
+            logger.info(f"Query completed in {total_time:.2f}s (search: {search_time:.2f}s, LLM: {llm_time:.2f}s)")
             
             return result
             

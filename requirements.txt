@@ -1,5 +1,4 @@
 meilisearch
-requests
+openai
 pandas
 python-dotenv
-

@@ -1,7 +1,7 @@
-import requests
-import json
 import logging
 from typing import Dict, Any, List
+from openai import OpenAI
+from openai.types.chat import ChatCompletion
 
 from config import Config
 
@@ -12,18 +12,25 @@ class OpenRouterClient:
     
     def __init__(self, api_key: str = None, base_url: str = None):
         """Initialize OpenRouter client"""
+        logger.info("Initializing OpenRouter client")
         self.api_key = api_key or Config.OPENROUTER_API_KEY
         self.base_url = base_url or Config.OPENROUTER_BASE_URL
         
         if not self.api_key:
+            logger.error("OpenRouter API key is missing")
             raise ValueError("OpenRouter API key is required")
         
-        self.headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-            "HTTP-Referer": "https://agentic-rag-system.com", 
-            "X-Title": "Agentic RAG System"
-        }
+        logger.info(f"Using OpenRouter base URL: {self.base_url}")
+        
+        self.client = OpenAI(
+            api_key=self.api_key,
+            base_url=self.base_url,
+            default_headers={
+                "HTTP-Referer": "https://agentic-rag-system.com",
+                "X-Title": "Agentic RAG System"
+            }
+        )
+        logger.info("OpenRouter client initialized successfully")
     
     def generate_response(self, 
                          messages: List[Dict[str, str]], 
@@ -34,41 +41,43 @@ class OpenRouterClient:
         try:
             model = model or Config.LLM_MODEL
             
-            payload = {
-                "model": model,
-                "messages": messages,
-                "temperature": temperature,
-                "max_tokens": max_tokens
-            }
-            
             logger.info(f"Generating response with model: {model}")
             
-            response = requests.post(
-                f"{self.base_url}/chat/completions",
-                headers=self.headers,
-                json=payload,
-                timeout=10  
+            response = self.client.chat.completions.create(
+                model=model,
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                timeout=10.0
             )
             
-            response.raise_for_status()
-            result = response.json()
+            result = {
+                "choices": [
+                    {
+                        "message": {
+                            "content": response.choices[0].message.content
+                        }
+                    }
+                ]
+            }
             
             logger.info("Response generated successfully")
             return result
             
-        except requests.exceptions.RequestException as e:
-            logger.error(f"API request failed: {e}")
-            raise
         except Exception as e:
             logger.error(f"Error generating response: {e}")
             raise
     
     def create_rag_prompt(self, query: str, context: List[Dict[str, Any]]) -> List[Dict[str, str]]:
         """Create a prompt for RAG system"""
+        logger.info(f"Creating RAG prompt for query: {query}")
+        logger.info(f"No. of context documents: {len(context)}")
     
         context_text = ""
         for i, doc in enumerate(context, 1):
             context_text += f"{i}. {doc['content']}\n"
+        
+        logger.info(f"Context text length: {len(context_text)} characters")
         
         system_prompt = """You are an e-commerce data analyst. Answer questions concisely based on the provided order data. Be direct and factual."""
         
@@ -84,21 +93,26 @@ Please provide a helpful answer based on the context data above."""
             {"role": "user", "content": user_prompt}
         ]
         
+        logger.info(f"Created prompt with {len(messages)} messages")
+        logger.info(f"Total prompt length: {len(str(messages))} characters")
+        
         return messages
     
     def get_available_models(self) -> List[Dict[str, Any]]:
         """Get list of available models"""
         try:
-            response = requests.get(
-                f"{self.base_url}/models",
-                headers=self.headers,
-                timeout=10
-            )
+            models = self.client.models.list()
             
-            response.raise_for_status()
-            result = response.json()
+            model_list = []
+            for model in models.data:
+                model_list.append({
+                    "id": model.id,
+                    "object": model.object,
+                    "created": model.created,
+                    "owned_by": model.owned_by
+                })
             
-            return result.get("data", [])
+            return model_list
             
         except Exception as e:
             logger.error(f"Error getting models: {e}")

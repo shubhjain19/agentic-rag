@@ -18,21 +18,29 @@ class EcommerceDataLoader:
     def load_data(self) -> pd.DataFrame:
         """Load CSV data into a pandas DataFrame"""
         try:
+            logger.info(f"Loading data from file: {self.data_file}")
             self.data = pd.read_csv(self.data_file)
+            logger.info(f"Successfully loaded {len(self.data)} rows from CSV file")
+            logger.info(f"Data columns: {list(self.data.columns)}")
             return self.data
         except FileNotFoundError:
             logger.error(f"Data file not found: {self.data_file}")
             raise
         except Exception as e:
             logger.error(f"Error loading data: {e}")
+            logger.error(f"Error type: {type(e).__name__}")
             raise
     
     def process_data(self) -> List[Dict[str, Any]]:
         """Process the data and convert to documents for indexing"""
+        logger.info("Starting data processing for indexing")
+        
         if self.data is None:
+            logger.info("Data not loaded, loading data first")
             self.load_data()
         
         documents = []
+        logger.info(f"Processing {len(self.data)} rows into documents")
         
         for index, row in self.data.iterrows():
             doc = {
@@ -49,6 +57,9 @@ class EcommerceDataLoader:
                 "quantity_range": self._get_quantity_range(row["Quantity"])
             }
             documents.append(doc)
+        
+        logger.info(f"Successfully processed {len(documents)} documents")
+        logger.info(f"Sample document ID: {documents[0]['id'] if documents else 'None'}")
         
         return documents
             

@@ -12,16 +12,22 @@ class MeilisearchClient:
     
     def __init__(self, url: str = None, master_key: str = None):
         """Initialize Meilisearch client"""
+        logger.info("Initializing Meilisearch client")
         self.url = url or Config.MEILISEARCH_URL
         self.master_key = master_key or Config.MEILISEARCH_MASTER_KEY
 
+        logger.info(f"Connecting to Meilisearch at: {self.url}")
         if self.master_key:
+            logger.info("Using master key for authentication")
             self.client = meilisearch.Client(self.url, self.master_key)
         else:
+            logger.info("Connecting without master key")
             self.client = meilisearch.Client(self.url)
         
         self.index_name = Config.INDEX_NAME
+        logger.info(f"Using index name: {self.index_name}")
         self.index = None
+        logger.info("Meilisearch client initialized successfully")
         
     def create_index(self) -> bool:
         """Create the index if it doesn't exist"""
@@ -70,6 +76,8 @@ class MeilisearchClient:
     def add_documents(self, documents: List[Dict[str, Any]]) -> bool:
         """Add documents to the index"""
         try:
+            logger.info(f"Adding {len(documents)} documents to index")
+            
             if not self.index:
                 self.get_or_create_index()
             
@@ -80,13 +88,15 @@ class MeilisearchClient:
                 import time
                 time.sleep(0.1)
             
-            # Wait for indexing to complete
+            logger.info("All batches added, waiting for indexing to complete")
+        
             import time
             max_wait = 30 
             wait_time = 0
             while wait_time < max_wait:
                 stats = self.get_index_stats()
                 if not stats.get('isIndexing', False):
+                    logger.info(f"Indexing completed after {wait_time} seconds")
                     break
                 time.sleep(1)
                 wait_time += 1
@@ -148,6 +158,9 @@ class MeilisearchClient:
             
             results = self.index.search(query, opt_params)
             
+            logger.info(f"Search completed - found {len(results.get('hits', []))} results")
+            logger.info(f"Search processing time: {results.get('processingTimeMs', 0)}ms")
+            
             return results
             
         except Exception as e:
@@ -184,8 +197,14 @@ class MeilisearchClient:
                 }
             
         except Exception as e:
-            logger.error(f"Error getting index stats: {e}")
-            raise
+            # Return default stats if index doesn't exist
+            logger.warning(f"Could not get index stats: {e}")
+            return {
+                'numberOfDocuments': 0,
+                'databaseSize': 0,
+                'indexSize': 0,
+                'updateId': 0
+            }
     
     def health_check(self) -> bool:
         """Check if Meilisearch is running"""
