@@ -167,6 +167,66 @@ class MeilisearchClient:
             logger.error(f"Error searching: {e}")
             raise
     
+    def search_by_category(self, query: str, limit: int = None) -> Dict[str, Any]:
+        """Search documents by category with enhanced relevance"""
+        try:
+            if not self.index:
+                self.get_or_create_index()
+            
+            opt_params = {
+                'limit': limit or 10,
+                'attributesToRetrieve': ['id', 'content', 'category', 'sub_category', 'amount', 'profit', 'quantity'],
+                'attributesToHighlight': ['category', 'sub_category'],
+                'attributesToCrop': ['content']
+            }
+            
+            if any(cat.lower() in query.lower() for cat in ['electronics', 'furniture', 'clothing']):
+                category_filter = None
+                for cat in ['electronics', 'furniture', 'clothing']:
+                    if cat.lower() in query.lower():
+                        category_filter = f"category = '{cat}'"
+                        break
+                
+                if category_filter:
+                    opt_params['filter'] = category_filter
+            
+            results = self.index.search(query, opt_params)
+            
+            logger.info(f"Category search completed - found {len(results.get('hits', []))} results")
+            return results
+            
+        except Exception as e:
+            logger.error(f"Error in category search: {e}")
+            return self.search(query, limit)
+    
+    def search_by_price_range(self, query: str, limit: int = None) -> Dict[str, Any]:
+        """Search documents by price range relevance"""
+        try:
+            if not self.index:
+                self.get_or_create_index()
+            
+            opt_params = {
+                'limit': limit or 10,
+                'attributesToRetrieve': ['id', 'content', 'category', 'sub_category', 'amount', 'profit', 'quantity'],
+                'sort': ['amount:asc']
+            }
+            
+            if any(word in query.lower() for word in ['cheap', 'affordable', 'budget', 'low']):
+                opt_params['filter'] = 'amount < 100'
+            elif any(word in query.lower() for word in ['expensive', 'luxury', 'premium', 'high']):
+                opt_params['filter'] = 'amount >= 500'
+            elif any(word in query.lower() for word in ['mid', 'medium']):
+                opt_params['filter'] = 'amount >= 100 AND amount < 500'
+            
+            results = self.index.search(query, opt_params)
+            
+            logger.info(f"Price range search completed - found {len(results.get('hits', []))} results")
+            return results
+            
+        except Exception as e:
+            logger.error(f"Error in price range search: {e}")
+            return self.search(query, limit)    
+    
     def get_index_stats(self) -> Dict[str, Any]:
         """Get index statistics"""
         try:
@@ -175,11 +235,9 @@ class MeilisearchClient:
             
             stats = self.index.get_stats()
             
-            # Convert to a simple dictionary format that's JSON serializable
             if hasattr(stats, 'to_dict'):
                 return stats.to_dict()
             elif hasattr(stats, '__dict__'):
-                # Filter out non-serializable objects
                 serializable_stats = {}
                 for key, value in stats.__dict__.items():
                     try:
@@ -197,7 +255,6 @@ class MeilisearchClient:
                 }
             
         except Exception as e:
-            # Return default stats if index doesn't exist
             logger.warning(f"Could not get index stats: {e}")
             return {
                 'numberOfDocuments': 0,

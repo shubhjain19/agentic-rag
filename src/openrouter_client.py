@@ -4,6 +4,7 @@ from openai import OpenAI
 from openai.types.chat import ChatCompletion
 
 from config import Config
+from prompts import E_COMMERCE_SYSTEM_PROMPT, RAG_USER_PROMPT_TEMPLATE
 
 logger = logging.getLogger(__name__)
 
@@ -73,23 +74,28 @@ class OpenRouterClient:
         logger.info(f"Creating RAG prompt for query: {query}")
         logger.info(f"No. of context documents: {len(context)}")
     
+        # Detect context automatically
+        is_personal_context = self._detect_personal_context(query)
+        logger.info(f"Detected context: {'PERSONAL' if is_personal_context else 'BUSINESS'}")
+        
         context_text = ""
         for i, doc in enumerate(context, 1):
-            context_text += f"{i}. {doc['content']}\n"
+            if is_personal_context:
+                content = doc.get('content', '')
+            else:
+                content = doc.get('business_content', doc.get('content', ''))
+            
+            context_text += f"{i}. {content}\n"
         
         logger.info(f"Context text length: {len(context_text)} characters")
         
-        system_prompt = """You are an e-commerce data analyst. Answer questions concisely based on the provided order data. Be direct and factual."""
-        
-        user_prompt = f"""Context Data:
-{context_text}
-
-User Question: {query}
-
-Please provide a helpful answer based on the context data above."""
+        user_prompt = RAG_USER_PROMPT_TEMPLATE.format(
+            context_text=context_text,
+            query=query
+        )
 
         messages = [
-            {"role": "system", "content": system_prompt},
+            {"role": "system", "content": E_COMMERCE_SYSTEM_PROMPT},
             {"role": "user", "content": user_prompt}
         ]
         
@@ -97,6 +103,35 @@ Please provide a helpful answer based on the context data above."""
         logger.info(f"Total prompt length: {len(str(messages))} characters")
         
         return messages
+    
+    def _detect_personal_context(self, query: str) -> bool:
+        """Automatically detect if the query is for personal shopping context"""
+        query_lower = query.lower()
+        
+        personal_keywords = [
+            'shopping', 'buy', 'buying', 'purchase', 'purchasing',
+            'gift', 'gifts', 'present', 'presents', 'souvenir', 'souvenirs',
+            'vacation', 'travel', 'trip', 'holiday', 'goa', 'beach',
+            'personal', 'family', 'friends', 'myself', 'me',
+            'recommend', 'recommendation', 'suggest', 'suggestion',
+            'what to buy', 'what should i buy', 'what can i take',
+            'need', 'want', 'looking for', 'searching for'
+        ]
+        
+        business_keywords = [
+            'business', 'profit', 'profitability', 'revenue', 'loss',
+            'margin', 'margins', 'analysis', 'analytics', 'performance',
+            'inventory', 'stock', 'quarterly', 'annual', 'strategy',
+            'management', 'optimization', 'efficiency', 'roi'
+        ]
+        
+        personal_matches = sum(1 for keyword in personal_keywords if keyword in query_lower)
+        business_matches = sum(1 for keyword in business_keywords if keyword in query_lower)
+        
+        if business_matches > personal_matches and business_matches > 0:
+            return False
+        else:
+            return True
     
     def get_available_models(self) -> List[Dict[str, Any]]:
         """Get list of available models"""

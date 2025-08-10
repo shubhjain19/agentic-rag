@@ -14,7 +14,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Reduce verbosity of other loggers
 logging.getLogger('meilisearch_client').setLevel(logging.WARNING)
 logging.getLogger('data_loader').setLevel(logging.WARNING)
 logging.getLogger('openrouter_client').setLevel(logging.WARNING)
@@ -31,67 +30,102 @@ class AgenticRAGSystem:
         Config.validate_config()
     
     def _smart_search(self, query: str, max_results: int, filters: str = None) -> Dict[str, Any]:
-        """Smart search with multiple strategies to find relevant documents"""
+        """Perform smart search with improved relevance"""
+        try:
+            results = self.meilisearch_client.search(query, max_results, filters)
+            
+            if results.get('hits') and len(results['hits']) >= max_results:
+                return results
+            
+            if not results.get('hits') or len(results['hits']) < max_results:
+                try:
+                    category_results = self.meilisearch_client.search_by_category(query, max_results)
+                    if category_results.get('hits'):
+                        if results.get('hits'):
+                            combined_hits = results['hits'] + category_results['hits']
+                            seen_ids = set()
+                            unique_hits = []
+                            for hit in combined_hits:
+                                if hit.get('id') not in seen_ids:
+                                    unique_hits.append(hit)
+                                    seen_ids.add(hit.get('id'))
+                                if len(unique_hits) >= max_results:
+                                    break
+                            results['hits'] = unique_hits
+                        else:
+                            results = category_results
+                except Exception as e:
+                    logger.warning(f"Category search failed: {e}")
+            
+            if not results.get('hits') or len(results['hits']) < max_results:
+                try:
+                    common_terms = ['electronics', 'furniture', 'clothing', 'phone', 'chair', 'saree']
+                    for term in common_terms:
+                        if len(results.get('hits', [])) >= max_results:
+                            break
+                        term_results = self.meilisearch_client.search(term, max_results - len(results.get('hits', [])))
+                        if term_results.get('hits'):
+                            if not results.get('hits'):
+                                results = term_results
+                            else:
+                                existing_ids = {hit.get('id') for hit in results['hits']}
+                                for hit in term_results['hits']:
+                                    if hit.get('id') not in existing_ids and len(results['hits']) < max_results:
+                                        results['hits'].append(hit)
+                except Exception as e:
+                    logger.warning(f"Fallback search failed: {e}")
+            
+            if not results.get('hits'):
+                results['hits'] = []
+            if 'estimatedTotalHits' not in results:
+                results['estimatedTotalHits'] = len(results['hits'])
+            if 'processingTimeMs' not in results:
+                results['processingTimeMs'] = 0
+                
+            return results
+            
+        except Exception as e:
+            logger.error(f"Smart search failed: {e}")
+            return {    
+                'hits': [],
+                'estimatedTotalHits': 0,
+                'processingTimeMs': 0
+            }
+    
+    def _detect_personal_context(self, query: str) -> bool:
+        """Automatically detect if the query is for personal shopping context"""
         query_lower = query.lower()
         
-        # Direct search
-        results = self.meilisearch_client.search(query, max_results, filters)
-        if results['hits']:
-            return results
+        personal_keywords = [
+            'shopping', 'buy', 'buying', 'purchase', 'purchasing',
+            'gift', 'gifts', 'present', 'presents', 'souvenir', 'souvenirs',
+            'vacation', 'travel', 'trip', 'holiday', 'goa', 'beach',
+            'personal', 'family', 'friends', 'myself', 'me',
+            'recommend', 'recommendation', 'suggest', 'suggestion',
+            'what to buy', 'what should i buy', 'what can i take',
+            'need', 'want', 'looking for', 'searching for'
+        ]
         
-        # Handle top queries specifically
-        if 'top' in query_lower:
-            # For top queries, search for terms that actually exist in the data
-            top_search_terms = ['order', 'item', 'amount', 'profit', 'Furniture', 'Electronics', 'Clothing']
-            for term in top_search_terms:
-                results = self.meilisearch_client.search(term, max_results * 2, filters)
-                if results['hits']:
-                    return results
+        business_keywords = [
+            'business', 'profit', 'profitability', 'revenue', 'loss',
+            'margin', 'margins', 'analysis', 'analytics', 'performance',
+            'inventory', 'stock', 'quarterly', 'annual', 'strategy',
+            'management', 'optimization', 'efficiency', 'roi'
+        ]
         
-        # Extract key terms and search
-        key_terms = self._extract_key_terms(query)
-        for term in key_terms:
-            if len(term) > 2: 
-                results = self.meilisearch_client.search(term, max_results, filters)
-                if results['hits']:
-                    return results
+        personal_matches = sum(1 for keyword in personal_keywords if keyword in query_lower)
+        business_matches = sum(1 for keyword in business_keywords if keyword in query_lower)
         
-        # Search by category if mentioned
-        categories = ['Electronics', 'Furniture', 'Clothing']
-        for category in categories:
-            if category.lower() in query_lower:
-                results = self.meilisearch_client.search(category, max_results, filters)
-                if results['hits']:
-                    return results
-        
-        # Search for common business terms that actually exist in the data
-        business_terms = ['profit', 'amount', 'order', 'item', 'Furniture', 'Electronics', 'Clothing']
-        for term in business_terms:
-            if term.lower() in query_lower:
-                results = self.meilisearch_client.search(term, max_results, filters)
-                if results['hits']:
-                    return results
-        
-        # If nothing found, try to get some sample data
-        if not results['hits']:
-            results = self.meilisearch_client.search("*", max_results, filters)
-        
-        return results
-    
-    def _extract_key_terms(self, query: str) -> List[str]:
-        """Extract key terms from query for better search"""
-        terms = query.split()
-        # Remove common stop words
-        stop_words = {'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by', 'is', 'are', 'was', 'were', 'be', 'been', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could', 'should', 'may', 'might', 'can', 'what', 'which', 'where', 'when', 'why', 'how', 'show', 'me', 'find', 'get', 'top', 'best', 'highest', 'lowest', 'average', 'total', 'orders', 'products', 'items'}
-        key_terms = [term.lower() for term in terms if term.lower() not in stop_words and len(term) > 2]
-        return key_terms
+        if business_matches > personal_matches and business_matches > 0:
+            return False
+        else:
+            return True
     
     def setup_index(self) -> bool:
         """Set up the Meilisearch index with data"""
         try:
             print("Initializing system...")
             
-            # Check if Meilisearch is running
             if not self.meilisearch_client.health_check():
                 logger.error("Meilisearch health check failed")
                 print("Error: Meilisearch is not running. Please start it first.")
@@ -130,7 +164,6 @@ class AgenticRAGSystem:
             start_time = time.time()
             logger.info(f"Processing query: '{user_query}'")
             
-            # Search for relevant documents with improved search
             search_results = self._smart_search(user_query, max_results or Config.MAX_SEARCH_RESULTS, filters)
             
             search_time = time.time() - start_time
@@ -151,35 +184,38 @@ class AgenticRAGSystem:
                     }
                 }
             
-            # Create RAG prompt with context
             context_docs = search_results['hits']
             messages = self.openrouter_client.create_rag_prompt(user_query, context_docs)
             
-            # Generate response using LLM
             llm_start_time = time.time()
             llm_response = self.openrouter_client.generate_response(
                 messages=messages,
                 model=model,
-                temperature=0.3,  # Lower temperature for more focused responses
+                temperature=0.3,
                 max_tokens=800
             )
             
             llm_time = time.time() - llm_start_time
             total_time = time.time() - start_time
             
-            # Extract the response text
             answer = llm_response['choices'][0]['message']['content']
             
-            # Prepare sources
+            is_personal_context = self._detect_personal_context(user_query)
+            
             sources = []
             for doc in context_docs:
+                if is_personal_context:
+                    content = doc.get('content', '')
+                else:
+                    content = doc.get('business_content', doc.get('content', ''))  # Business content
+                
                 sources.append({
                     "order_id": doc.get("order_id"),
                     "category": doc.get("category"),
                     "sub_category": doc.get("sub_category"),
                     "amount": doc.get("amount"),
-                    "profit": doc.get("profit"),
-                    "content": doc.get("content")
+                    "profit": doc.get("profit") if not is_personal_context else None,  # Hide profit for personal context
+                    "content": content
                 })
             
             result = {
