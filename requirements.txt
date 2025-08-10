@@ -1,0 +1,4 @@
+meilisearch
+openai
+pandas
+python-dotenv
